@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Historique | ESP Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.2.0"></script>
+    <style>
+        :root {
+            --primary-color: #2E86AB;  /* Bleu océan principal */
+            --secondary-color: #3D9970;  /* Vert sage */
+            --accent-color: #17B890;  /* Vert émeraude */
+            --dark-color: #1b263b;
+            --light-color: #f8f9fa;
+        }
+
+        body {
+            background-color: #f5f7fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .dashboard-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(46, 134, 171, 0.3);
+        }
+
+        .chart-container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            height: 400px;
+        }
+
+        .period-selector {
+            max-width: 300px;
+            margin: 0 auto;
+        }
+
+        .btn-back {
+            background-color: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        .btn-back:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+
+        .chart-title {
+            color: var(--dark-color);
+            margin-bottom: 15px;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .data-table {
+            background-color: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            margin-top: 20px;
+        }
+
+        .table thead th {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .phase-1 { border-left: 4px solid #2E86AB; }
+        .phase-2 { border-left: 4px solid #3D9970; }
+        .phase-3 { border-left: 4px solid #17B890; }
+    </style>
+</head>
+<body>
+    <div class="container py-4">
+        <!-- En-tête -->
+        <div class="dashboard-header p-4 mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h1 class="display-5 fw-bold mb-0">
+                    <i class="bi bi-graph-up"></i> Historique ESP {{ device_id }}
+                </h1>
+                <div>
+                    <a href="/dashboard?device_id={{ device_id }}" class="btn btn-back">
+                        <i class="bi bi-arrow-left"></i> Retour
+                    </a>
+                </div>
+            </div>
+            <p class="lead mb-0">{{ selected_days }} derniers jours - Visualisation graphique</p>
+        </div>
+
+        <!-- Sélecteur de période -->
+        <div class="card mb-4">
+            <div class="card-body p-4">
+                <form method="GET" class="input-group period-selector">
+                    <select class="form-select" name="days" onchange="this.form.submit()">
+                        <option value="1" {% if selected_days == 1 %}selected{% endif %}>24 dernières heures</option>
+                        <option value="7" {% if selected_days == 7 %}selected{% endif %}>7 derniers jours</option>
+                        <option value="30" {% if selected_days == 30 %}selected{% endif %}>30 derniers jours</option>
+                        <option value="90" {% if selected_days == 90 %}selected{% endif %}>3 derniers mois</option>
+                    </select>
+                </form>
+            </div>
+        </div>
+
+        {% if voltage_data or current_data or power_data or freq_data %}
+            <!-- Debug: Afficher les données reçues -->
+            <script>
+                console.log("Données reçues:");
+                console.log("Tension:", {{ voltage_data|tojson }});
+                console.log("Courant:", {{ current_data|tojson }});
+                console.log("Puissance:", {{ power_data|tojson }});
+                console.log("Fréquence:", {{ freq_data|tojson }});
+            </script>
+
+            <!-- Section Graphiques -->
+            <div class="row mb-4">
+                <!-- Graphique Tension -->
+                <div class="col-md-6 mb-3">
+                    <div class="chart-container">
+                        <h5 class="chart-title text-center"><i class="bi bi-lightning" style="color: #2E86AB;"></i> Tension (V)</h5>
+                        <canvas id="voltageChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Graphique Courant -->
+                <div class="col-md-6 mb-3">
+                    <div class="chart-container">
+                        <h5 class="chart-title text-center"><i class="bi bi-lightning-fill" style="color: #3D9970;"></i> Courant (A)</h5>
+                        <canvas id="currentChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Graphique Puissance -->
+                <div class="col-md-6 mb-3">
+                    <div class="chart-container">
+                        <h5 class="chart-title text-center"><i class="bi bi-battery-charging" style="color: #17B890;"></i> Puissance (W)</h5>
+                        <canvas id="powerChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Graphique Fréquence -->
+                <div class="col-md-6 mb-3">
+                    <div class="chart-container">
+                        <h5 class="chart-title text-center"><i class="bi bi-speedometer2" style="color: #4A5899;"></i> Fréquence (Hz)</h5>
+                        <canvas id="frequencyChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section Tableau -->
+            <div class="data-table">
+                <h4 class="p-3 mb-0 bg-primary text-white rounded-top">
+                    <i class="bi bi-table"></i> Dernières mesures enregistrées
+                </h4>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>Phase</th>
+                                <th>Valeur</th>
+                                <th>Unité</th>
+                                <th>Date/Mesure</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in voltage_data[-10:]|reverse %}
+                            <tr class="phase-{{ row[1] }}">
+                                <td>Tension</td>
+                                <td>L{{ row[1] }}</td>
+                                <td>{{ "%.2f"|format(row[2]) }}</td>
+                                <td>{{ row[3] }}</td>
+                                <td>{{ row[4] }}</td>
+                            </tr>
+                            {% endfor %}
+
+                            {% for row in current_data[-10:]|reverse %}
+                            <tr class="phase-{{ row[1] }}">
+                                <td>Courant</td>
+                                <td>L{{ row[1] }}</td>
+                                <td>{{ "%.2f"|format(row[2]) }}</td>
+                                <td>{{ row[3] }}</td>
+                                <td>{{ row[4] }}</td>
+                            </tr>
+                            {% endfor %}
+
+                            {% for row in power_data[-10:]|reverse %}
+                            <tr class="phase-{{ row[1] }}">
+                                <td>Puissance</td>
+                                <td>L{{ row[1] }}</td>
+                                <td>{{ "%.2f"|format(row[2]) }}</td>
+                                <td>{{ row[3] }}</td>
+                                <td>{{ row[4] }}</td>
+                            </tr>
+                            {% endfor %}
+
+                            {% for row in freq_data[-10:]|reverse %}
+                            <tr>
+                                <td>Fréquence</td>
+                                <td>-</td>
+                                <td>{{ "%.2f"|format(row[2]) }}</td>
+                                <td>{{ row[3] }}</td>
+                                <td>{{ row[4] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <script>
+                // ============== CONFIGURATION DES COULEURS ==============
+                const chartColors = {
+                    phase1: '#2E86AB',  // Bleu océan (Phase 1)
+                    phase2: '#3D9970',  // Vert sage (Phase 2)
+                    phase3: '#17B890',  // Vert émeraude (Phase 3)
+                    frequency: '#4A5899',  // Bleu foncé (Fréquence)
+                    backgroundOpacity: '20'  // Transparence (20%)
+                };
+
+                // ============== FONCTIONS UTILITAIRES ==============
+                function formatDate(dateStr) {
+                    return luxon.DateTime.fromSQL(dateStr).toJSDate();
+                }
+
+                // ============== PRÉPARATION DES DONNÉES ==============
+                function prepareChartData(rawData, chartType) {
+                    if (!rawData || rawData.length === 0) {
+                        console.warn(`Aucune donnée pour ${chartType}`);
+                        return null;
+                    }
+
+                    // Cas spécial pour la fréquence
+                    if (chartType === 'frequency') {
+                        return {
+                            labels: rawData.map(item => formatDate(item[4])),
+                            datasets: [{
+                                label: 'Fréquence (Hz)',
+                                data: rawData.map(item => item[2]),
+                                borderColor: chartColors.frequency,
+                                backgroundColor: chartColors.frequency + chartColors.backgroundOpacity,
+                                tension: 0.3,
+                                borderWidth: 3,
+                                fill: true
+                            }]
+                        };
+                    }
+
+                    // Préparation des données par phase
+                    const phases = {};
+                    rawData.forEach(item => {
+                        const phase = item[1];
+                        if (!phases[phase]) phases[phase] = [];
+                        phases[phase].push({
+                            x: formatDate(item[4]),
+                            y: item[2]
+                        });
+                    });
+
+                    // Correspondance des couleurs
+                    const phaseColorMap = {
+                        1: chartColors.phase1,
+                        2: chartColors.phase2,
+                        3: chartColors.phase3
+                    };
+
+                    return {
+                        datasets: Object.keys(phases).map(phase => ({
+                            label: `${chartType} Phase L${phase}`,
+                            data: phases[phase],
+                            borderColor: phaseColorMap[phase],
+                            backgroundColor: phaseColorMap[phase] + chartColors.backgroundOpacity,
+                            tension: 0.3,
+                            borderWidth: 2,
+                            fill: true
+                        }))
+                    };
+                }
+
+                // ============== OPTIONS DES GRAPHIQUES ==============
+                const chartOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                parser: 'yyyy-MM-dd HH:mm:ss',
+                                tooltipFormat: 'dd/MM HH:mm',
+                                displayFormats: {
+                                    hour: 'HH:mm',
+                                    day: 'dd/MM'
+                                }
+                            },
+                            title: { 
+                                display: true, 
+                                text: 'Date/Heure',
+                                color: '#6c757d'
+                            }
+                        },
+                        y: {
+                            title: { 
+                                display: true, 
+                                text: 'Valeur',
+                                color: '#6c757d'
+                            },
+                            beginAtZero: false,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { 
+                                boxWidth: 12, 
+                                padding: 20,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                            titleFont: { size: 14 },
+                            bodyFont: { size: 12 },
+                            callbacks: {
+                                label: function(context) {
+                                    let unit = '';
+                                    if (context.dataset.label.includes('Tension')) unit = ' V';
+                                    if (context.dataset.label.includes('Courant')) unit = ' A';
+                                    if (context.dataset.label.includes('Puissance')) unit = ' W';
+                                    if (context.dataset.label.includes('Fréquence')) unit = ' Hz';
+                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(2)}${unit}`;
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
+                };
+
+                // ============== CRÉATION DES GRAPHIQUES ==============
+                function createChart(chartId, data, chartType) {
+                    const ctx = document.getElementById(chartId);
+                    if (!ctx) return;
+
+                    const chartData = prepareChartData(data, chartType);
+                    if (!chartData) {
+                        ctx.parentNode.innerHTML += `
+                            <div class="alert alert-warning mt-3">
+                                <i class="bi bi-exclamation-circle"></i>
+                                Aucune donnée disponible pour ${chartType}
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    new Chart(ctx, {
+                        type: 'line',
+                        data: chartData,
+                        options: chartOptions
+                    });
+                }
+
+                // Initialisation lorsque la page est chargée
+                document.addEventListener('DOMContentLoaded', function() {
+                    createChart('voltageChart', {{ voltage_data|tojson }}, 'Tension');
+                    createChart('currentChart', {{ current_data|tojson }}, 'Courant');
+                    createChart('powerChart', {{ power_data|tojson }}, 'Puissance');
+                    createChart('frequencyChart', {{ freq_data|tojson }}, 'frequency');
+                });
+            </script>
+        {% else %}
+            <div class="alert alert-warning text-center py-4">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                Aucune donnée disponible pour cette période
+            </div>
+        {% endif %}
+    </div>
+
+    <footer class="text-center py-4 text-muted small">
+        <div class="container">
+            <hr>
+            <p class="mb-0">Système de supervision énergétique &copy; 2025</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
